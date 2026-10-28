@@ -33,8 +33,8 @@ const GAME_DURATION = 15;
 let gameState = 'ready';
 let timeLeft = GAME_DURATION;
 let score = 0;
-// after a round ends, ignore the trigger for a moment so a player who is still
-// firing doesn't accidentally press PLAY AGAIN
+// after a round ends, ignore the A button for a moment so the score screen
+// can't be skipped by accident
 let menuCooldown = 0;
 // the scene, saved here so startGame/endGame can add and remove things
 let gameScene;
@@ -91,26 +91,21 @@ const messageText = makeText(0.09, 0xffffff);
 messageText.textAlign = 'center';
 
 // ---------------------------------------------------------------------------
-// START / PLAY AGAIN BUTTON
+// START / PLAY AGAIN SIGN
 // ---------------------------------------------------------------------------
-// A green 3D box with text on its front. The player points a blaster at it and pulls the trigger.
-const startButtonMaterial = new THREE.MeshStandardMaterial({
-	color: 0x1fbf5b,
-	emissive: 0x1fbf5b,
-	emissiveIntensity: 0.25,
-});
-const startButton = new THREE.Mesh(
-	new THREE.BoxGeometry(1, 0.3, 0.06),
-	startButtonMaterial,
+// A green 3D sign with text on its front. It is only a sign: the game is started by
+// pressing the A button on the right controller (see onFrame below).
+const startSign = new THREE.Mesh(
+	new THREE.BoxGeometry(1.7, 0.3, 0.06),
+	new THREE.MeshStandardMaterial({
+		color: 0x1fbf5b,
+		emissive: 0x1fbf5b,
+		emissiveIntensity: 0.25,
+	}),
 );
-const startButtonText = makeText(0.12, 0xffffff);
-startButtonText.position.z = 0.04; // just in front of the box so it is not hidden inside it
-startButton.add(startButtonText);
-
-// A ray is an invisible line shot out of the controller. If it crosses the button, the player is pointing at it.
-const raycaster = new THREE.Raycaster();
-const rayOrigin = new THREE.Vector3();
-const rayQuaternion = new THREE.Quaternion();
+const startSignText = makeText(0.11, 0xffffff);
+startSignText.position.z = 0.04; // just in front of the box so it is not hidden inside it
+startSign.add(startSignText);
 
 // global constants to manage the movement of the bullets
 // This vector points forward along the negative Z-axis. It represents the default direction in which bullets will move.
@@ -122,14 +117,6 @@ const bulletTimeToLive = 1;
 
 // object to keep track of bullet count
 const bullets = {};
-
-function isPointingAtButton(raySpace) {
-	raySpace.getWorldPosition(rayOrigin);
-	raySpace.getWorldQuaternion(rayQuaternion);
-	const direction = forwardVector.clone().applyQuaternion(rayQuaternion);
-	raycaster.set(rayOrigin, direction);
-	return raycaster.intersectObject(startButton).length > 0;
-}
 
 // ---------------------------------------------------------------------------
 // BLASTERS (one for each hand)
@@ -156,11 +143,11 @@ function resetTargets() {
 	});
 }
 
-// Show the button and a message (used before the first round and after each round)
-function showMenu(buttonLabel, message) {
-	startButton.visible = true;
-	startButtonText.text = buttonLabel;
-	startButtonText.sync();
+// Show the sign and a message (used before the first round and after each round)
+function showMenu(signLabel, message) {
+	startSign.visible = true;
+	startSignText.text = signLabel;
+	startSignText.sync();
 	messageText.visible = true;
 	messageText.text = message;
 	messageText.sync();
@@ -172,14 +159,14 @@ function startGame() {
 	updateScoreDisplay();
 	timeLeft = GAME_DURATION;
 	updateTimerDisplay();
-	startButton.visible = false;
+	startSign.visible = false;
 	messageText.visible = false;
 	resetTargets();
 }
 
 function endGame() {
 	gameState = 'over';
-	menuCooldown = 1.5;
+	menuCooldown = 1;
 	timeLeft = 0;
 	updateTimerDisplay();
 	// remove any bullets that are still flying
@@ -187,7 +174,7 @@ function endGame() {
 		gameScene.remove(bullet);
 		delete bullets[bullet.uuid];
 	});
-	showMenu('PLAY AGAIN', `TIME IS UP!\nSCORE ${score}`);
+	showMenu('PRESS A TO PLAY AGAIN', `TIME IS UP!\nSCORE ${score}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -230,7 +217,7 @@ function setupScene({ scene, camera }) {
 	scoreText.rotateX(-Math.PI / 3.3);
 	updateScoreDisplay();
 
-	// Add the timer, the message and the start button
+	// Add the timer, the message and the start sign
 	scene.add(timerText);
 	timerText.position.set(0, 2.9, -3);
 	updateTimerDisplay();
@@ -238,11 +225,11 @@ function setupScene({ scene, camera }) {
 	scene.add(messageText);
 	messageText.position.set(0, 1.75, -1.2);
 
-	scene.add(startButton);
-	startButton.position.set(0, 1.35, -1.2);
+	scene.add(startSign);
+	startSign.position.set(0, 1.35, -1.2);
 
 	showMenu(
-		'START',
+		'PRESS A TO START',
 		`SHOOT AS MANY TARGETS AS\nYOU CAN IN ${GAME_DURATION} SECONDS`,
 	);
 
@@ -330,7 +317,6 @@ function onFrame(delta, _time, { scene, controllers }) {
 	}
 
 	// 2. The controllers (both hands work the same way)
-	let pointingAtButton = false;
 	HANDS.forEach((hand) => {
 		const controller = controllers[hand];
 		if (!controller) return;
@@ -342,21 +328,19 @@ function onFrame(delta, _time, { scene, controllers }) {
 			mesh.visible = false; // Hide the default controller model
 		}
 
-		const triggerClicked = gamepad.getButtonClick(XR_BUTTONS.TRIGGER);
-
-		if (gameState === 'playing') {
-			// During a round, the trigger fires bullets
-			if (triggerClicked) fireBlaster(hand, scene, gamepad);
-		} else if (menuCooldown <= 0 && isPointingAtButton(raySpace)) {
-			// In the menus, the trigger presses the button if the player is pointing at it
-			pointingAtButton = true;
-			if (triggerClicked) startGame();
+		// During a round, the trigger fires bullets (from either hand)
+		if (gameState === 'playing' && gamepad.getButtonClick(XR_BUTTONS.TRIGGER)) {
+			fireBlaster(hand, scene, gamepad);
 		}
 	});
 
-	// Make the button glow and grow a little while it is being pointed at
-	startButtonMaterial.emissiveIntensity = pointingAtButton ? 0.9 : 0.25;
-	startButton.scale.setScalar(pointingAtButton ? 1.08 : 1);
+	// The A button on the RIGHT controller starts the game (and starts a new round after "time is up").
+	// BUTTON_1 is the A button on the right controller.
+	if (gameState !== 'playing' && menuCooldown <= 0 && controllers.right) {
+		if (controllers.right.gamepad.getButtonClick(XR_BUTTONS.BUTTON_1)) {
+			startGame();
+		}
+	}
 
 	// 3. Move the bullets and check if they hit a target
 	Object.values(bullets).forEach((bullet) => {
